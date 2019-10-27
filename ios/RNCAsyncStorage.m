@@ -16,6 +16,7 @@
 #import <React/RCTLog.h>
 #import <React/RCTUtils.h>
 
+static NSString *const APP_GROUP = @"group.com.polehin.wallet";
 static NSString *const RCTStorageDirectory = @"RCTAsyncLocalStorage_V1";
 static NSString *const RCTOldStorageDirectory = @"RNCAsyncLocalStorage_V1";
 static NSString *const RCTManifestFileName = @"manifest.json";
@@ -58,7 +59,7 @@ static NSArray<NSDictionary *> *RCTMakeErrors(NSArray<id<NSObject>> *results) {
 
 static NSString *RCTReadFile(NSString *filePath, NSString *key, NSDictionary **errorOut)
 {
-  if ([[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+  if ([[NSFileManager defaultManager] fileExistsAtPath:filePath ]) {
     NSError *error;
     NSStringEncoding encoding;
     NSString *entryString = [NSString stringWithContentsOfFile:filePath usedEncoding:&encoding error:&error];
@@ -86,7 +87,17 @@ static NSString *RCTCreateStorageDirectoryPath(NSString *storageDir) {
 #else
   storageDirectoryPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
 #endif
+    
   storageDirectoryPath = [storageDirectoryPath stringByAppendingPathComponent:storageDir];
+    
+  return storageDirectoryPath;
+}
+
+static NSString *RCTCreateSharedStorageDirectoryPath(NSString *storageDir) {
+  NSString *storageDirectoryPath;
+  storageDirectoryPath = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier: APP_GROUP].path;
+  storageDirectoryPath = [storageDirectoryPath stringByAppendingPathComponent:storageDir];
+    
   return storageDirectoryPath;
 }
 
@@ -95,9 +106,14 @@ static NSString *RCTGetStorageDirectory()
   static NSString *storageDirectory = nil;
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
-    storageDirectory = RCTCreateStorageDirectoryPath(RCTStorageDirectory);
+    storageDirectory = RCTCreateSharedStorageDirectoryPath(RCTStorageDirectory);
   });
   return storageDirectory;
+}
+
+static NSString *RCTCreateSharedManifestFilePath(NSString *storageDirectory)
+{
+  return [RCTCreateSharedStorageDirectoryPath(storageDirectory) stringByAppendingPathComponent:RCTManifestFileName];
 }
 
 static NSString *RCTCreateManifestFilePath(NSString *storageDirectory)
@@ -110,7 +126,7 @@ static NSString *RCTGetManifestFilePath()
   static NSString *manifestFilePath = nil;
   static dispatch_once_t onceToken;
   dispatch_once(&onceToken, ^{
-    manifestFilePath = RCTCreateManifestFilePath(RCTStorageDirectory);
+    manifestFilePath = RCTCreateSharedManifestFilePath(RCTStorageDirectory);
   });
   return manifestFilePath;
 }
@@ -194,23 +210,23 @@ static void RCTStorageDirectoryMigrationLogError(NSString *reason, NSError *erro
   RCTLogWarn(@"%@: %@", reason, error ? error.description : @"");
 }
 
-static void RCTStorageDirectoryCleanupOld()
+static void RCTStorageDirectoryCleanupOld(NSString *oldStorageDirectory)
 {
   NSError *error;
-  if (![[NSFileManager defaultManager] removeItemAtPath:RCTCreateStorageDirectoryPath(RCTOldStorageDirectory) error:&error]) {
+  if (![[NSFileManager defaultManager] removeItemAtPath:RCTCreateStorageDirectoryPath(oldStorageDirectory) error:&error]) {
     RCTStorageDirectoryMigrationLogError(@"Failed to remove old storage directory during migration", error);
   }
 }
 
-static void RCTStorageDirectoryMigrate()
+static void RCTStorageDirectoryMigrate(NSString *oldStorageDirectory)
 {
   NSError *error;
   // Migrate data by copying old storage directory to new storage directory location
-  if (![[NSFileManager defaultManager] copyItemAtPath:RCTCreateStorageDirectoryPath(RCTOldStorageDirectory) toPath:RCTGetStorageDirectory() error:&error]) {
-    RCTStorageDirectoryMigrationLogError(@"Failed to copy old storage directory to new storage directory location during migration", error);
-  } else {
+  if ([[NSFileManager defaultManager] copyItemAtPath:RCTCreateStorageDirectoryPath(oldStorageDirectory) toPath:RCTGetStorageDirectory() error:&error]) {
     // If copying succeeds, remove old storage directory
-    RCTStorageDirectoryCleanupOld();
+    RCTStorageDirectoryCleanupOld(oldStorageDirectory);
+  } else {
+    RCTStorageDirectoryMigrationLogError(@"Failed to copy old storage directory to new storage directory location during migration", error);
   }
 }
 
@@ -224,27 +240,35 @@ static void RCTStorageDirectoryMigrationCheck()
   dispatch_once(&onceToken, ^{
     NSError *error;
     BOOL isDir;
-    // If the old directory exists, it means we may need to migrate old data to the new directory
-    if ([[NSFileManager defaultManager] fileExistsAtPath:RCTCreateStorageDirectoryPath(RCTOldStorageDirectory) isDirectory:&isDir] && isDir) {
+    NSString *oldStorageDirectory;
+    
+      // If the old directory exists, it means we may need to migrate old data to the new directory
+      if ([[NSFileManager defaultManager] fileExistsAtPath:RCTCreateStorageDirectoryPath(RCTOldStorageDirectory) isDirectory:&isDir] && isDir) {
+          oldStorageDirectory = RCTOldStorageDirectory;
+      } else if ([[NSFileManager defaultManager] fileExistsAtPath:RCTCreateStorageDirectoryPath(RCTStorageDirectory) isDirectory:&isDir] && isDir) {
+          oldStorageDirectory = RCTStorageDirectory;
+      } else {
+          return;
+      }
+      
       // Check if the new storage directory location already exists
       if ([[NSFileManager defaultManager] fileExistsAtPath:RCTGetStorageDirectory()]) {
         // If new storage location exists, check if the new storage has been modified sooner
         if ([RCTManifestModificationDate(RCTGetManifestFilePath()) compare:RCTManifestModificationDate(RCTCreateManifestFilePath(RCTOldStorageDirectory))] == 1) {
           // If new location has been modified more recently, simply clean out old data
-          RCTStorageDirectoryCleanupOld();
+          RCTStorageDirectoryCleanupOld(oldStorageDirectory);
         } else {
           // If old location has been modified more recently, remove new storage and migrate
           if (![[NSFileManager defaultManager] removeItemAtPath:RCTGetStorageDirectory() error:&error]) {
             RCTStorageDirectoryMigrationLogError(@"Failed to remove new storage directory during migration", error);
           } else {
-            RCTStorageDirectoryMigrate();
+            RCTStorageDirectoryMigrate(oldStorageDirectory);
           }
         }
       } else {
         // If new storage location doesn't exist, migrate data
-        RCTStorageDirectoryMigrate();
+        RCTStorageDirectoryMigrate(oldStorageDirectory);
       }
-    }
   });
 }
 
