@@ -253,18 +253,12 @@ static void RCTStorageDirectoryMigrationCheck()
       
       // Check if the new storage directory location already exists
       if ([[NSFileManager defaultManager] fileExistsAtPath:RCTGetStorageDirectory()]) {
-        // If new storage location exists, check if the new storage has been modified sooner
-        if ([RCTManifestModificationDate(RCTGetManifestFilePath()) compare:RCTManifestModificationDate(RCTCreateManifestFilePath(RCTOldStorageDirectory))] == 1) {
-          // If new location has been modified more recently, simply clean out old data
-          RCTStorageDirectoryCleanupOld(oldStorageDirectory);
-        } else {
           // If old location has been modified more recently, remove new storage and migrate
-          if (![[NSFileManager defaultManager] removeItemAtPath:RCTGetStorageDirectory() error:&error]) {
-            RCTStorageDirectoryMigrationLogError(@"Failed to remove new storage directory during migration", error);
-          } else {
+          if ([[NSFileManager defaultManager] removeItemAtPath:RCTGetStorageDirectory() error:&error]) {
             RCTStorageDirectoryMigrate(oldStorageDirectory);
+          } else {
+            RCTStorageDirectoryMigrationLogError(@"Failed to remove new storage directory during migration", error);
           }
-        }
       } else {
         // If new storage location doesn't exist, migrate data
         RCTStorageDirectoryMigrate(oldStorageDirectory);
