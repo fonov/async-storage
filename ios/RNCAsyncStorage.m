@@ -345,7 +345,7 @@ RCT_EXPORT_MODULE()
 - (NSDictionary *)_ensureSetup
 {
   RCTAssertThread(RCTGetMethodQueue(), @"Must be executed on storage thread");
-
+    
 #if TARGET_OS_TV
   RCTLogWarn(@"Persistent storage is not supported on tvOS, your data may be removed at any point.");
 #endif
@@ -364,7 +364,12 @@ RCT_EXPORT_MODULE()
   if (!_haveSetup) {
     NSDictionary *errorOut;
     NSString *serialized = RCTReadFile(RCTGetManifestFilePath(), RCTManifestFileName, &errorOut);
-    _manifest = serialized ? RCTJSONParseMutable(serialized, &error) : [NSMutableDictionary new];
+      if (serialized != nil) {
+        id json = RCTJSONParseMutable(serialized, &error);
+        _manifest = json != [NSNull null] ? json : [NSMutableDictionary new];
+      } else {
+        _manifest = [NSMutableDictionary new];
+      }
     if (error) {
       RCTLogWarn(@"Failed to parse manifest - creating new one.\n\n%@", error);
       _manifest = [NSMutableDictionary new];
